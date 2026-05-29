@@ -1,0 +1,12 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "powershell",
+    "TENANT_ID": "your-tenant-id",
+    "CLIENT_ID": "your-client-id",
+    "CLIENT_SECRET": "your-client-secret-if-using-secret",
+    "CERTIFICATE_THUMBPRINT": "your-cert-thumbprint-if-using-cba",
+    "SPO_URL": "https://yourtenant.sharepoint.com"
+  }
+}

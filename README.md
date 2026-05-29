@@ -1,3 +1,5 @@
+[![Docker Image CI](https://github.com/Calvindd2f/func-pwsh-sp-cba/actions/workflows/docker-image.yml/badge.svg)](https://github.com/Calvindd2f/func-pwsh-sp-cba/actions/workflows/docker-image.yml)
+
 # Azure Functions Container App
 **PowerShell JWT Token Generation & Ad-Hoc PnP Script Execution**
 

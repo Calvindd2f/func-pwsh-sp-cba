@@ -20,6 +20,26 @@ function Get-UnixTimestamp {
     return [int]([DateTime]::UtcNow - $epoch).TotalSeconds
 }
 
+function New-ErrorResponse {
+    param(
+        [HttpStatusCode]$StatusCode,
+        [string]$ErrorCode,
+        [string]$Message,
+        [string]$Details = $null
+    )
+    $body = @{
+        error     = $ErrorCode
+        message   = $Message
+        timestamp = (Get-Date -Format "o")
+    }
+    if ($Details) { $body.details = $Details }
+    return [HttpResponseContext]@{
+        StatusCode  = $StatusCode
+        Body        = $body
+        ContentType = "application/json"
+    }
+}
+
 # ============================================================================
 # EXTRACT PARAMETERS
 # ============================================================================
@@ -42,19 +62,39 @@ if ($bodyParams) {
     if ($bodyParams.spoUrl) { $spoUrl = $bodyParams.spoUrl }
 }
 
-if (-not $tenantId -or -not $clientId -or -not $spoUrl) {
-    Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
-        StatusCode = [HttpStatusCode]::BadRequest
-        Body = "Missing tenantId, clientId, or spoUrl. Provide them in environment variables or request body."
-    })
+# ============================================================================
+# VALIDATE PARAMETERS
+# ============================================================================
+$missingParams = @()
+if (-not $tenantId) { $missingParams += "tenantId" }
+if (-not $clientId) { $missingParams += "clientId" }
+if (-not $spoUrl)   { $missingParams += "spoUrl" }
+
+if ($missingParams.Count -gt 0) {
+    Push-OutputBinding -Name Response -Value (New-ErrorResponse `
+        -StatusCode ([HttpStatusCode]::BadRequest) `
+        -ErrorCode "MISSING_REQUIRED_PARAMS" `
+        -Message "Missing required parameters: $($missingParams -join ', '). Provide them in environment variables or request body." `
+        -Details "Required: tenantId (GUID), clientId (GUID), spoUrl (e.g., https://contoso.sharepoint.com)")
+    return
+}
+
+# Validate spoUrl format
+if ($spoUrl -notmatch '^https://[a-zA-Z0-9\-]+\.sharepoint\.com') {
+    Push-OutputBinding -Name Response -Value (New-ErrorResponse `
+        -StatusCode ([HttpStatusCode]::BadRequest) `
+        -ErrorCode "INVALID_SPO_URL" `
+        -Message "spoUrl must be a valid SharePoint Online URL." `
+        -Details "Expected format: https://contoso.sharepoint.com or https://contoso-admin.sharepoint.com. Received: $spoUrl")
     return
 }
 
 if (-not $clientSecret -and -not $certThumbprint -and -not $certBase64) {
-    Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
-        StatusCode = [HttpStatusCode]::BadRequest
-        Body = "Provide clientSecret, certificateThumbprint, or certificateBase64 for authentication."
-    })
+    Push-OutputBinding -Name Response -Value (New-ErrorResponse `
+        -StatusCode ([HttpStatusCode]::BadRequest) `
+        -ErrorCode "MISSING_AUTH_CREDENTIAL" `
+        -Message "No authentication credential provided. Supply one of: certificateBase64, certificateThumbprint, or clientSecret." `
+        -Details "Certificate-based auth (certificateBase64) is recommended for production and multi-tenant scenarios.")
     return
 }
 
@@ -91,7 +131,12 @@ try {
             }
             
             if (-not $cert) {
-                throw "Failed to load certificate from Base64. If it has a password, ensure you pass 'certificatePassword'."
+                Push-OutputBinding -Name Response -Value (New-ErrorResponse `
+                    -StatusCode ([HttpStatusCode]::BadRequest) `
+                    -ErrorCode "CERTIFICATE_LOAD_FAILED" `
+                    -Message "Failed to load certificate from Base64. Ensure the PFX is valid and the password is correct." `
+                    -Details "If your PFX has a password, include 'certificatePassword' in the request body. The Base64 string must be a PFX (not a .cer or .pem).")
+                return
             }
         } else {
             $cert = Get-ChildItem -Path Cert:\CurrentUser\My | Where-Object { $_.Thumbprint -eq $certThumbprint }
@@ -100,8 +145,23 @@ try {
             }
         }
 
-        if (-not $cert) { throw "Certificate not found." }
-        if (-not $cert.HasPrivateKey) { throw "Certificate does not have a private key." }
+        if (-not $cert) {
+            Push-OutputBinding -Name Response -Value (New-ErrorResponse `
+                -StatusCode ([HttpStatusCode]::BadRequest) `
+                -ErrorCode "CERTIFICATE_NOT_FOUND" `
+                -Message "Certificate with thumbprint '$certThumbprint' not found in CurrentUser\My or LocalMachine\My." `
+                -Details "For containerized deployments, use certificateBase64 (Base64-encoded PFX) instead of thumbprint.")
+            return
+        }
+
+        if (-not $cert.HasPrivateKey) {
+            Push-OutputBinding -Name Response -Value (New-ErrorResponse `
+                -StatusCode ([HttpStatusCode]::BadRequest) `
+                -ErrorCode "CERTIFICATE_NO_PRIVATE_KEY" `
+                -Message "Certificate does not contain a private key." `
+                -Details "You must provide a PFX file (which includes the private key), not a .cer file (which is public key only). Re-export using: Export-PfxCertificate -Cert \$cert -FilePath cert.pfx -Password \$securePassword")
+            return
+        }
 
         # 2. Build x5t
         $actualThumbprint = $cert.Thumbprint
@@ -134,8 +194,10 @@ try {
         $signingInput = "$headerB64.$payloadB64"
         $signingInputBytes = [System.Text.Encoding]::UTF8.GetBytes($signingInput)
 
-        # 4. Sign JWT
+        # 4. Sign JWT (4-method fallback chain)
         $signatureBytes = $null
+
+        # Method 1: CNG via GetRSAPrivateKey
         try {
             $rsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cert)
             if ($rsa) {
@@ -143,6 +205,7 @@ try {
             }
         } catch { }
 
+        # Method 2: Export + reimport with CNG
         if (-not $signatureBytes) {
             try {
                 $oldRsa = $cert.PrivateKey
@@ -153,6 +216,7 @@ try {
             } catch { }
         }
 
+        # Method 3: Enhanced CSP
         if (-not $signatureBytes) {
             try {
                 $oldRsa = $cert.PrivateKey
@@ -168,6 +232,7 @@ try {
             } catch { }
         }
 
+        # Method 4: Manual OID
         if (-not $signatureBytes) {
             $oldRsa = $cert.PrivateKey
             $csp = New-Object System.Security.Cryptography.CspParameters
@@ -182,7 +247,14 @@ try {
             $signatureBytes = $enhancedRsa.SignHash($hash, "2.16.840.1.101.3.4.2.1")
         }
 
-        if (-not $signatureBytes) { throw "All signing methods failed" }
+        if (-not $signatureBytes) {
+            Push-OutputBinding -Name Response -Value (New-ErrorResponse `
+                -StatusCode ([HttpStatusCode]::InternalServerError) `
+                -ErrorCode "JWT_SIGNING_FAILED" `
+                -Message "All 4 JWT signing methods failed." `
+                -Details "Ensure the certificate uses RSA 2048+ with SHA256. ECDSA and DSA certificates are not supported. Re-generate with: New-SelfSignedCertificate -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256")
+            return
+        }
 
         $signatureB64 = ConvertTo-Base64UrlString -Bytes $signatureBytes
         $clientAssertion = "$signingInput.$signatureB64"
@@ -211,12 +283,9 @@ try {
     })
 } catch {
     Write-Error "Failed to generate token: $_"
-    Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
-        StatusCode = [HttpStatusCode]::InternalServerError
-        Body = @{
-            error = "Failed to generate token"
-            details = $_.Exception.Message
-        }
-        ContentType = "application/json"
-    })
+    Push-OutputBinding -Name Response -Value (New-ErrorResponse `
+        -StatusCode ([HttpStatusCode]::InternalServerError) `
+        -ErrorCode "TOKEN_GENERATION_FAILED" `
+        -Message "Failed to generate access token." `
+        -Details $_.Exception.Message)
 }

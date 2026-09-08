@@ -3,23 +3,23 @@
 # Uses CNG for SHA256 signing - Compatible with CAPI certificates
 # ============================================================================
 
-$TenantId = "{{- CTX.TenantId | d('') -}}"
-$ClientId = "{{- CTX.ClientId | d('') -}}"
-$CertThumbprint = "{{- CTX.CertThumbprint | d('') -}}"
-$SharePointTenant = "{{- CTX.SharePointTenant | d('') -}}"
+$TenantId = ""
+$ClientId = ""
+$CertThumbprint = ""
+$SharePointTenant = ""
 
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
 function ConvertTo-Base64UrlString {
-param([byte[]]$Bytes)
-$base64 = [Convert]::ToBase64String($Bytes)
-return $base64.TrimEnd('=').Replace('+', '-').Replace('/', '_')
+    param([byte[]]$Bytes)
+    $base64 = [Convert]::ToBase64String($Bytes)
+    return $base64.TrimEnd('=').Replace('+', '-').Replace('/', '_')
 }
 
 function Get-UnixTimestamp {
-$epoch = [DateTime]::new(1970, 1, 1, 0, 0, 0, [DateTimeKind]::Utc)
-return [int]([DateTime]::UtcNow - $epoch).TotalSeconds
+    $epoch = [DateTime]::new(1970, 1, 1, 0, 0, 0, [DateTimeKind]::Utc)
+    return [int]([DateTime]::UtcNow - $epoch).TotalSeconds
 }
 
 # ============================================================================
@@ -82,7 +82,8 @@ try {
     if ($rsa) {
         $signatureBytes = $rsa.SignData($signingInputBytes, [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
     }
-} catch {
+}
+catch {
     $rsa = $null
 }
 
@@ -97,7 +98,8 @@ if (-not $signatureBytes) {
         $cngRsa.ImportParameters($params)
 
         $signatureBytes = $cngRsa.SignData($signingInputBytes, [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
-    } catch {
+    }
+    catch {
         # Continue to next method
     }
 }
@@ -122,7 +124,8 @@ if (-not $signatureBytes) {
         $sha256 = [System.Security.Cryptography.SHA256]::Create()
         $hash = $sha256.ComputeHash($signingInputBytes)
         $signatureBytes = $enhancedRsa.SignHash($hash, [System.Security.Cryptography.CryptoConfig]::MapNameToOID("SHA256"))
-    } catch {
+    }
+    catch {
         # Continue to next method
     }
 }
@@ -170,7 +173,7 @@ $body = @{
 }
 
 $response = Invoke-RestMethod -Uri $tokenEndpoint -Method POST -Body $body -ContentType "application/x-www-form-urlencoded"
-$results=@{
+$results = @{
     success      = $true
     access_token = $response.access_token
     token_type   = $response.token_type

@@ -1,0 +1,125 @@
+{
+  "_description": "Library of common PnP/SPO PowerShell scripts ready to send to the /api/InvokeScript endpoint. Each entry has a name, description, category, and the script payload.",
+  "scripts": [
+    {
+      "name": "Get Web Info",
+      "category": "Basics",
+      "description": "Returns the title, URL, and creation date of the connected web.",
+      "script": "Get-PnPWeb | Select-Object Title, Url, Created, Description | ConvertTo-Json"
+    },
+    {
+      "name": "List All Sites",
+      "category": "Inventory",
+      "description": "Lists all site collections in the tenant with basic metadata.",
+      "script": "Get-PnPTenantSite | Select-Object Url, Title, Template, Owner | ConvertTo-Json"
+    },
+    {
+      "name": "Detailed Site Inventory",
+      "category": "Inventory",
+      "description": "Comprehensive site inventory with storage, sharing, and activity data.",
+      "script": "Get-PnPTenantSite -Detailed | Select-Object Url, Title, Template, Owner, StorageUsageCurrent, StorageMaximumLevel, LastContentModifiedDate, LockState, SharingCapability, ConditionalAccessPolicy, GroupId | ConvertTo-Json -Depth 3"
+    },
+    {
+      "name": "Find Inactive Sites",
+      "category": "Inventory",
+      "description": "Lists sites with no content modifications in the last 90 days.",
+      "script": "$cutoff = (Get-Date).AddDays(-90); Get-PnPTenantSite -Detailed | Where-Object { $_.LastContentModifiedDate -lt $cutoff } | Select-Object Url, Title, LastContentModifiedDate, StorageUsageCurrent | Sort-Object LastContentModifiedDate | ConvertTo-Json"
+    },
+    {
+      "name": "Storage Usage Report",
+      "category": "Storage",
+      "description": "Top 20 sites by storage usage with quota information.",
+      "script": "Get-PnPTenantSite -Detailed | Select-Object Url, @{N='UsageGB';E={[math]::Round($_.StorageUsageCurrent/1024,2)}}, @{N='QuotaGB';E={[math]::Round($_.StorageMaximumLevel/1024,2)}}, @{N='PercentUsed';E={if($_.StorageMaximumLevel -gt 0){[math]::Round(($_.StorageUsageCurrent/$_.StorageMaximumLevel)*100,1)}else{'Unlimited'}}} | Sort-Object UsageGB -Descending | Select-Object -First 20 | ConvertTo-Json"
+    },
+    {
+      "name": "List Non-Hidden Lists",
+      "category": "Lists",
+      "description": "Lists all non-hidden lists and libraries in the site with item counts.",
+      "script": "Get-PnPList | Where-Object { -not $_.Hidden } | Select-Object Title, BaseTemplate, ItemCount, Created, LastItemModifiedDate | ConvertTo-Json"
+    },
+    {
+      "name": "Site Collection Admins",
+      "category": "Permissions",
+      "description": "Lists all site collection administrators.",
+      "script": "Get-PnPSiteCollectionAdmin | Select-Object Title, Email, LoginName | ConvertTo-Json"
+    },
+    {
+      "name": "Unique Permissions Audit",
+      "category": "Permissions",
+      "description": "Finds all lists with unique (broken inheritance) permissions.",
+      "script": "$lists = Get-PnPList -Includes HasUniqueRoleAssignments; $results = @(); foreach ($l in $lists) { if ($l.HasUniqueRoleAssignments) { $results += [PSCustomObject]@{ ListTitle = $l.Title; UniquePerms = $true } } }; $results | ConvertTo-Json"
+    },
+    {
+      "name": "Reset List Permissions",
+      "category": "Permissions",
+      "description": "Resets all lists to inherit permissions from the parent site.",
+      "script": "$lists = Get-PnPList -Includes HasUniqueRoleAssignments; $reset = @(); foreach ($l in $lists) { if ($l.HasUniqueRoleAssignments -and -not $l.Hidden) { Set-PnPList -Identity $l -ResetRoleInheritance; $reset += $l.Title } }; [PSCustomObject]@{ ResetLists = $reset; Count = $reset.Count } | ConvertTo-Json"
+    },
+    {
+      "name": "Hub Sites",
+      "category": "Hub Sites",
+      "description": "Lists all hub sites in the tenant.",
+      "script": "Get-PnPHubSite | Select-Object SiteId, SiteUrl, Title, Description | ConvertTo-Json"
+    },
+    {
+      "name": "Content Types",
+      "category": "Content Types",
+      "description": "Lists all content types in the site.",
+      "script": "Get-PnPContentType | Select-Object Name, Id, Group, Description | ConvertTo-Json"
+    },
+    {
+      "name": "Site Fields",
+      "category": "Content Types",
+      "description": "Lists all custom site columns.",
+      "script": "Get-PnPField | Where-Object { $_.FromBaseType -eq $false } | Select-Object Title, InternalName, TypeAsString, Group | ConvertTo-Json"
+    },
+    {
+      "name": "Sharing Capability Report",
+      "category": "Security",
+      "description": "Reports sharing capability settings for all sites.",
+      "script": "Get-PnPTenantSite | Select-Object Url, SharingCapability, ConditionalAccessPolicy, DenyAddAndCustomizePages | ConvertTo-Json"
+    },
+    {
+      "name": "Locked Sites",
+      "category": "Security",
+      "description": "Finds all locked or read-only site collections.",
+      "script": "Get-PnPTenantSite | Where-Object { $_.LockState -ne 'Unlock' } | Select-Object Url, Title, LockState | ConvertTo-Json"
+    },
+    {
+      "name": "Lock Site (Read-Only)",
+      "category": "Administration",
+      "description": "Sets a site collection to read-only mode. Change the -Identity URL to your target site.",
+      "script": "Set-PnPTenantSite -Identity 'https://contoso.sharepoint.com/sites/TargetSite' -LockState 'ReadOnly'; Write-Output 'Site locked to read-only'"
+    },
+    {
+      "name": "Unlock Site",
+      "category": "Administration",
+      "description": "Unlocks a site collection. Change the -Identity URL to your target site.",
+      "script": "Set-PnPTenantSite -Identity 'https://contoso.sharepoint.com/sites/TargetSite' -LockState 'Unlock'; Write-Output 'Site unlocked'"
+    },
+    {
+      "name": "Set Storage Quota",
+      "category": "Storage",
+      "description": "Sets storage quota on a site (5GB max, 4.5GB warning). Change the -Identity URL.",
+      "script": "Set-PnPTenantSite -Identity 'https://contoso.sharepoint.com/sites/TargetSite' -StorageMaximumLevel 5120 -StorageWarningLevel 4608; Write-Output 'Storage quota set: 5GB max, 4.5GB warning'"
+    },
+    {
+      "name": "Recycle Bin Report",
+      "category": "Storage",
+      "description": "Lists items in the site recycle bin with size information.",
+      "script": "Get-PnPRecycleBinItem | Select-Object Title, ItemType, Size, DeletedByName, DeletedDate | Sort-Object Size -Descending | Select-Object -First 50 | ConvertTo-Json"
+    },
+    {
+      "name": "Empty Recycle Bin",
+      "category": "Storage",
+      "description": "Clears the site recycle bin to reclaim storage.",
+      "script": "Clear-PnPRecycleBinItem -All -Force; Write-Output 'Recycle bin cleared'"
+    },
+    {
+      "name": "External Users",
+      "category": "Security",
+      "description": "Lists external users who have access to the site.",
+      "script": "Get-PnPExternalUser | Select-Object DisplayName, InvitedAs, AcceptedAs, WhenCreated | ConvertTo-Json"
+    }
+  ]
+}
